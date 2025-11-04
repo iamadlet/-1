@@ -8,29 +8,93 @@
 import XCTest
 @testable import FirstTest
 
-final class FirstTestTests: XCTestCase {
-
-    override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-    }
-
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
-    }
-
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        self.measure {
-            // Put the code you want to measure the time of here.
+final class MockRateService: RateServiceProtocol {
+    var result: Result<[Rate], PlistLoaderError>?
+    
+    func loadRates(completion: @escaping (Result<[Rate], PlistLoaderError>) -> Void) {
+        if let result = result {
+            completion(result)
         }
     }
-
 }
+
+final class MockView: DetailViewProtocol {
+    var didLoadRates = false
+    var didShowError = false
+    var didLoadOriginalTransactions = false
+    var didLoadConvertedTransactions = false
+    
+    func loadRates(_ rates: [Rate]) {
+        didLoadRates = true
+    }
+    
+    func loadOriginalTransactions(_ transactions: [Transaction]) {
+        didLoadOriginalTransactions = true
+    }
+    
+    func loadConvertedTransactions(_ transactions: [Transaction]) {
+        didLoadConvertedTransactions = true
+    }
+    
+    func showError(_ message: String) {
+        didShowError = true
+    }
+}
+
+final class DetailPresenterTests: XCTestCase {
+    var presenter: DetailPresenter!
+    var mockService: MockRateService!
+    var mockView: MockView!
+    
+    override func setUp() {
+        super.setUp()
+        mockService = MockRateService()
+        mockView = MockView()
+        
+        let context = DetailFactory.Context(product: Product(
+            sku: "TST123",
+            transactions: [
+                Transaction(amount: 10, currency: "USD", sku: "TST123"),
+                Transaction(amount: 5, currency: "GBP", sku: "TST123")
+            ]
+        ))
+        
+        presenter = DetailPresenter(rateService: mockService,
+                                    context: context,
+                                    formatter: CurrencyFormatter())
+        presenter.view = mockView
+    }
+    
+    func testConvertTransactions_ConvertsUSDToGBP() {
+        // GIVEN
+        let rates = [Rate(from: "USD", rate: 0.8, to: "GBP")]
+        presenter.convertTransactions([])
+        let converter = CurrencyConverter(rates: rates)
+        
+        // WHEN
+        let result = converter.convert(from: "USD", to: "GBP", amount: 10)
+        
+        // THEN
+        XCTAssertEqual(result!, 8.0, accuracy: 0.0001)
+    }
+    
+    func testViewDidLoad_WhenRatesLoadSuccessfully_CallsLoadRates() {
+        // GIVEN
+        let rates = [Rate(from: "USD", rate: 0.8, to: "GBP")]
+        mockService.result = .success(rates)
+        
+        let expectation = XCTestExpectation(description: "Wait for rates to load")
+        
+        // WHEN
+        presenter.viewDidLoad()
+        
+        // THEN
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            XCTAssertTrue(self.mockView.didLoadRates)
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
+    }
+}
+
